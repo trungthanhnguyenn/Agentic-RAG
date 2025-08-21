@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas import ChatRequest, ChatResponse
 from graph.graph import build_graph
+from router.agent import router as agent_router
 
 
 app = FastAPI(title="Agentic RAG Chatbot")
@@ -24,4 +25,6 @@ def chat(req: ChatRequest) -> ChatResponse:
     final_state = graph_runnable.invoke(init_state)
     return ChatResponse(final_answer=final_state.get("final_answer", ""), trace=final_state)
 
+
+app.include_router(agent_router, prefix="/agent", tags=["agent"])
 
