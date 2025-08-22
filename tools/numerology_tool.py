@@ -30,7 +30,7 @@ class S3Client:
         )
         self.bucket_name = os.getenv('BUCKET_NAME')
 
-    def get_document_text_for_numerology(self, number_type: str, number: int) -> str:
+    def get_document_text_for_numerology(self, number_type: str, number: int, milestone_number: int = None, challenge_number: int = None) -> str:
         """
         Tải file từ S3 dựa trên loại số và giá trị số.
 
@@ -78,11 +78,20 @@ class S3Client:
         elif number_type == "rational_thinking":
             folder = f"{base_folder}/tu_duy_ly_tri"
             file_name = f"tu_duy_ly_tri_{number}.docx"
+        elif number_type in ("milestone", "giai_doan"):
+            # Milestone documents are indexed by milestone order (1..4)
+            folder = f"{base_folder}/giai_doan_{milestone_number}"
+            file_name = f"chang_{number}.docx"
+        elif number_type in ("challenge", "thu_thach"):
+            # Challenge documents are indexed by challenge order (1..4)
+            folder = f"{base_folder}/thach_thuc_giai_doan_{challenge_number}"
+            file_name = f"thach_thuc_{number}.docx"
         else:
             # For unsupported types, return a placeholder
             return f"Tài liệu cho {number_type} với giá trị {number} chưa có sẵn."
 
         file_key = f"{folder}/{file_name}"
+        print(f"[S3 Numerology] Fetching: bucket={self.bucket_name}, key={file_key}")
 
         if self.s3 is None:
             raise ValueError("S3 client không được khởi tạo.")
@@ -93,7 +102,7 @@ class S3Client:
             # Check if bucket exists and is accessible
             try:
                 self.s3.head_bucket(Bucket=self.bucket_name)
-                # print(f"✅ Bucket {self.bucket_name} is accessible")
+                print(f"✅ Bucket {self.bucket_name} is accessible")
             except Exception as bucket_error:
                 print(f"⚠️ Bucket access issue: {bucket_error}")
                 return f"Không thể truy cập bucket {self.bucket_name}: {bucket_error}"
