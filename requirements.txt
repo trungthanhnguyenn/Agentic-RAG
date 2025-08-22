@@ -18,3 +18,5 @@ python-docx
 langchain-google-genai
 google-generativeai
 pydantic>=2
+gradio==5.34.1
+gradio_client==1.10.3
