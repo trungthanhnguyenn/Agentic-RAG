@@ -103,6 +103,10 @@ CONTEXT_MAPPING = {
     "tâm lý": ["soul", "personality", "balance", "emotional_response_style"],
     "cảm xúc": ["soul", "personality", "balance", "emotional_response_style"],
     "kiểm soát": ["balance", "rational_thinking", "maturity"],
+    "buồn": ["soul", "personality", "balance", "emotional_response_style"],
+    "vui": ["soul", "personality", "balance", "emotional_response_style"],
+    "tự tin": ["soul", "personality", "balance", "emotional_response_style"],
+    "thất vọng": ["soul", "personality", "balance", "emotional_response_style"],
     
     # Strategy & approach
     "chiến lược": ["life_path", "life_purpose", "maturity", "milestone_1", "milestone_2", "milestone_3", "milestone_4"],
@@ -111,6 +115,7 @@ CONTEXT_MAPPING = {
     
     # Risk & management
     "rủi ro": ["balance", "challenge_1", "challenge_2", "challenge_3", "challenge_4", "missing_aspects"],
+    "chú ý": ["balance", "challenge_1", "challenge_2", "challenge_3", "challenge_4", "missing_aspects"],
     "quản lý": ["balance", "maturity", "rational_thinking"],
     
     # Motivation & purpose
@@ -276,6 +281,7 @@ def _prepare_data(input_dict: Dict[str, Any]) -> Dict[str, Any]:
     question: str = input_dict["question"]
     user_name: Optional[str] = input_dict.get("user_name")
     birthday: Optional[str] = input_dict.get("birthday")
+    current_day: Optional[str] = input_dict.get("current_day")
     
     # Use manual input if provided, otherwise fallback to parsing
     if user_name and birthday:
@@ -286,7 +292,21 @@ def _prepare_data(input_dict: Dict[str, Any]) -> Dict[str, Any]:
     # Validate minimal profile
     DataValidator().validate_profile(profile.get("name"), profile.get("dob"))
 
-    cal = CalNum(dob=profile["dob"], name=profile["name"])
+    # Validate current_day: accept dd/mm/yyyy; if invalid/empty/None, let CalNum default to VN time
+    def _normalize_current_day(day_str: Optional[str]) -> Optional[str]:
+        if not day_str:
+            return None
+        s = str(day_str).strip()
+        if not s:
+            return None
+        import re
+        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", s):
+            return s
+        return None
+
+    normalized_current = _normalize_current_day(current_day)
+
+    cal = CalNum(dob=profile["dob"], name=profile["name"], current_date=normalized_current)
     numbers = cal.get_personal_date_num()
 
     selected_keys = _select_keys(question)
@@ -325,11 +345,51 @@ def _prepare_data(input_dict: Dict[str, Any]) -> Dict[str, Any]:
         "balance": ("balance", numbers.get("balance")),
         "maturity": ("maturity", numbers.get("maturity")),
         "passion": ("passion", numbers.get("passion")),
+        "emotional_response_style": ("emotional_response_style", numbers.get("emotional_response_style")),
+        "link_connection": ("link_connection", numbers.get("link_connection")),
+        "challenge_1": ("challenge_1", numbers.get("challenge_1")),
+        "challenge_2": ("challenge_2", numbers.get("challenge_2")),
+        "challenge_3": ("challenge_3", numbers.get("challenge_3")),
+        "challenge_4": ("challenge_4", numbers.get("challenge_4")),
+        "milestone_1": ("milestone_1", numbers.get("milestone_phase", {}).get("milestone_1")),
+        "milestone_2": ("milestone_2", numbers.get("milestone_phase", {}).get("milestone_2")),
+        "milestone_3": ("milestone_3", numbers.get("milestone_phase", {}).get("milestone_3")),
+        "milestone_4": ("milestone_4", numbers.get("milestone_phase", {}).get("milestone_4")),
         "rational_thinking": ("rational_thinking", numbers.get("rational_thinking")),
         "personal_day": ("personal_day", numbers.get("alignment_signals", {}).get("personal_day")),
         "personal_year": ("personal_year", numbers.get("alignment_signals", {}).get("personal_year")),
         "personal_month": ("personal_month", numbers.get("alignment_signals", {}).get("personal_month")),
     }
+
+    # Prefetch S3 docs for current milestone/challenge so they are always available
+    try:
+        current_milestone_ord = int(milestone_info.get("current_milestone"))
+        milestone_key = milestone_info.get("milestone_name")
+        if milestone_key:
+            milestone_val = numbers.get("milestone_phase", {}).get(milestone_key)
+            if isinstance(milestone_val, int):
+                try:
+                    doc_content = s3.get_document_text_for_numerology(
+                        "milestone", milestone_val, milestone_number=current_milestone_ord
+                    )
+                    if doc_content and not doc_content.startswith("Lỗi"):
+                        docs[milestone_key] = doc_content
+                except Exception:
+                    pass
+        challenge_key = milestone_info.get("challenge_name")
+        if challenge_key:
+            challenge_val = numbers.get("challenge", {}).get(challenge_key)
+            if isinstance(challenge_val, int):
+                try:
+                    doc_content = s3.get_document_text_for_numerology(
+                        "challenge", challenge_val, challenge_number=current_milestone_ord
+                    )
+                    if doc_content and not doc_content.startswith("Lỗi"):
+                        docs[challenge_key] = doc_content
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     # Fetch documents for all selected keys
     print(f"�� Fetching documents for {len(selected_keys)} selected keys...")
@@ -338,6 +398,63 @@ def _prepare_data(input_dict: Dict[str, Any]) -> Dict[str, Any]:
     for key in selected_keys:
         print(f"  Processing key: {key}")
         
+        # Special handling: milestone_X and challenge_X should fetch S3 docs by ordinal (1..4)
+        if key.startswith("milestone_"):
+            try:
+                milestone_ord = int(key.split("_")[1])
+                # File name expects milestone value (calculated), folder expects ordinal 1..4
+                milestone_value = numbers.get("milestone_phase", {}).get(f"milestone_{milestone_ord}")
+                if not isinstance(milestone_value, int):
+                    docs[f"{key}_error"] = f"Invalid milestone value: {milestone_value}"
+                    print(f"    ⚠️ Invalid milestone value: {milestone_value}")
+                    continue
+                try:
+                    doc_content = s3.get_document_text_for_numerology(
+                        "milestone",
+                        milestone_value,
+                        milestone_number=milestone_ord,
+                    )
+                    if doc_content:
+                        docs[key] = doc_content
+                        print(f"    ✅ Milestone doc fetched: {len(str(doc_content))} chars")
+                    else:
+                        docs[f"{key}_error"] = "Empty content"
+                        print(f"    ⚠️ Milestone doc fetch returned empty content")
+                except Exception as e:
+                    docs[f"{key}_error"] = str(e)
+                    print(f"    ❌ Milestone doc exception: {e}")
+                continue
+            except Exception as e:
+                print(f"    ⚠️ Invalid milestone key '{key}': {e}")
+
+        if key.startswith("challenge_"):
+            try:
+                challenge_ord = int(key.split("_")[1])
+                # File name expects challenge value (calculated), folder expects ordinal 1..4
+                challenge_value = numbers.get("challenge", {}).get(f"challenge_{challenge_ord}")
+                if not isinstance(challenge_value, int):
+                    docs[f"{key}_error"] = f"Invalid challenge value: {challenge_value}"
+                    print(f"    ⚠️ Invalid challenge value: {challenge_value}")
+                    continue
+                try:
+                    doc_content = s3.get_document_text_for_numerology(
+                        "challenge",
+                        challenge_value,
+                        challenge_number=challenge_ord,
+                    )
+                    if doc_content:
+                        docs[key] = doc_content
+                        print(f"    ✅ Challenge doc fetched: {len(str(doc_content))} chars")
+                    else:
+                        docs[f"{key}_error"] = "Empty content"
+                        print(f"    ⚠️ Challenge doc fetch returned empty content")
+                except Exception as e:
+                    docs[f"{key}_error"] = str(e)
+                    print(f"    ❌ Challenge doc exception: {e}")
+                continue
+            except Exception as e:
+                print(f"    ⚠️ Invalid challenge key '{key}': {e}")
+
         if key in indicator_mapping:
             s3_type, number_value = indicator_mapping[key]
             print(f"    S3 type: {s3_type}, number value: {number_value}")
@@ -362,27 +479,31 @@ def _prepare_data(input_dict: Dict[str, Any]) -> Dict[str, Any]:
             print(f"    Using calculated value for: {key}")
             
             if key in numbers:
-                docs[key] = f"Giá trị: {numbers[key]}"
+                if key not in docs:
+                    docs[key] = f"Giá trị: {numbers[key]}"
             elif key == milestone_info["milestone_name"]:
                 # Current milestone with age context
-                milestone_value = numbers.get("milestone_phase", {}).get(f"milestone_{milestone_info['current_milestone']}")
-                docs[key] = f"{milestone_info['milestone_description']} - Giá trị: {milestone_value}"
+                if key not in docs:
+                    milestone_value = numbers.get("milestone_phase", {}).get(f"milestone_{milestone_info['current_milestone']}")
+                    docs[key] = f"{milestone_info['milestone_description']} - Giá trị: {milestone_value}"
             elif key == milestone_info["challenge_name"]:
                 # Current challenge with age context
-                challenge_value = numbers.get("challenge", {}).get(f"challenge_{milestone_info['current_milestone']}")
-                docs[key] = f"{milestone_info['challenge_description']} - Giá trị: {challenge_value}"
+                if key not in docs:
+                    challenge_value = numbers.get("challenge", {}).get(f"challenge_{milestone_info['current_milestone']}")
+                    docs[key] = f"{milestone_info['challenge_description']} - Giá trị: {challenge_value}"
             elif key.startswith("challenge_"):
                 challenge_num = key.split("_")[1]
                 challenge_value = numbers.get("challenge", {}).get(f"challenge_{challenge_num}")
-                if challenge_value is not None:
+                if challenge_value is not None and key not in docs:
                     docs[key] = f"Thách thức {challenge_num}: {challenge_value}"
             elif key.startswith("milestone_"):
                 milestone_num = key.split("_")[1]
                 milestone_value = numbers.get("milestone_phase", {}).get(f"milestone_{milestone_num}")
-                if milestone_value is not None:
+                if milestone_value is not None and key not in docs:
                     docs[key] = f"Giai đoạn {milestone_num}: {milestone_value}"
             else:
-                docs[key] = f"Giá trị: {numbers.get(key, 'N/A')}"
+                if key not in docs:
+                    docs[key] = f"Giá trị: {numbers.get(key, 'N/A')}"
 
     # Provide mapping meanings for selected keys
     meanings: Dict[str, str] = {}
