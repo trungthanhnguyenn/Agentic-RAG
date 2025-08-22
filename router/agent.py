@@ -23,6 +23,7 @@ def numerology_agent_endpoint(req: NumerologyRequest) -> NumerologyResponse:
             "question": req.question,
             "user_name": req.user_name,
             "birthday": req.birthday,
+            "current_day": req.current_day,
         }
         data = prepare_numerology_data(payload)
 

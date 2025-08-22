@@ -17,6 +17,7 @@ class NumerologyRequest(BaseModel):
     user_name: str = Field(..., description="Họ và tên đầy đủ")
     birthday: str = Field(..., description="Ngày sinh dạng dd/mm/yyyy")
     question: str = Field(..., description="Câu hỏi của người dùng")
+    current_day: Optional[str] = Field(None, description="Ngày hiện tại dạng dd/mm/yyyy; nếu None/\"\"/sai định dạng sẽ tự lấy theo Asia/Ho_Chi_Minh")
 
 
 class NumerologyResponse(BaseModel):
